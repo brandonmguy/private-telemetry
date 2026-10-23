@@ -6,7 +6,7 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table';
-import { fetchMessages, fetchMessage, fetchSources, fetchEventTypes, fetchStats, clearMessages } from './api.js';
+import { fetchMessages, fetchMessage, fetchSources, fetchEventTypes, fetchStats, clearMessages, downloadExport } from './api.js';
 import JsonViewer from './JsonViewer.jsx';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -120,6 +120,12 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
+function localDateInput(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
 function typeBadge(t) {
   if (!t) return <span className="badge badge-other">—</span>;
   const lower = t.toLowerCase();
@@ -146,6 +152,8 @@ export default function App() {
   const [detail, setDetail]         = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [showClear, setShowClear]   = useState(false);
+  const [error, setError] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   // Filters
   const [filterSource, setFilterSource]     = useState('');
@@ -182,17 +190,19 @@ export default function App() {
       setMessages(data.rows);
       setTotal(data.total);
     } catch (e) {
-      console.error(e);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   }, [page, pageSize, filterSource, filterName, filterMsgType, search, filterFrom, filterTo, sorting]);
 
   const loadSidebar = useCallback(async () => {
-    const [s, e, st] = await Promise.all([fetchSources(), fetchEventTypes(), fetchStats()]);
-    setSources(s);
-    setEventTypes(e);
-    setStats(st);
+    try {
+      const [s, e, st] = await Promise.all([fetchSources(), fetchEventTypes(), fetchStats()]);
+      setSources(s);
+      setEventTypes(e);
+      setStats(st);
+    } catch (error) { setError(error.message); }
   }, []);
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
@@ -222,12 +232,24 @@ export default function App() {
   useEffect(() => { setPage(1); }, [filterSource, filterName, filterMsgType, search, filterFrom, filterTo]);
 
   const handleClear = async () => {
-    await clearMessages();
-    setShowClear(false);
-    setSelectedId(null);
-    setDetail(null);
-    loadMessages();
-    loadSidebar();
+    try {
+      await clearMessages();
+      setShowClear(false);
+      setSelectedId(null);
+      setDetail(null);
+      loadMessages();
+      loadSidebar();
+    } catch (error) { setError(error.message); }
+  };
+
+  const handleExport = async (format) => {
+    setExporting(true);
+    try {
+      await downloadExport({ source: filterSource, name: filterName, msg_type: filterMsgType,
+        search, from: filterFrom, to: filterTo, sort: sorting[0]?.id,
+        dir: sorting[0]?.desc ? 'desc' : 'asc' }, format);
+    } catch (error) { setError(error.message); }
+    finally { setExporting(false); }
   };
 
   const handleSearchSubmit = (e) => {
@@ -316,7 +338,7 @@ export default function App() {
         <div className="clear-confirm" onClick={() => setShowClear(false)}>
           <div className="clear-dialog" onClick={e => e.stopPropagation()}>
             <h4>Clear all messages?</h4>
-            <p>This will permanently delete all {total.toLocaleString()} stored messages from the database.</p>
+            <p>This will permanently delete all {(stats?.total ?? total).toLocaleString()} stored messages, including messages hidden by filters.</p>
             <div className="actions">
               <button className="btn" onClick={() => setShowClear(false)}>Cancel</button>
               <button className="btn btn-danger" onClick={handleClear}>Clear All</button>
@@ -328,7 +350,7 @@ export default function App() {
       <div className="layout">
         {/* Top bar */}
         <header className="topbar">
-          <div className="topbar-title">Lens <span>Telemetry</span> Viewer</div>
+          <div className="topbar-title">Lens <span>Telemetry</span> Viewer <small>· Lab sample</small></div>
           {stats && (
             <>
               <div className="stat-pill">Total<strong>{stats.total.toLocaleString()}</strong></div>
@@ -405,6 +427,9 @@ export default function App() {
         <main className="main">
           {/* Toolbar */}
           <div className="toolbar">
+            {error && <div role="alert" style={{ width: '100%', color: 'var(--red)' }}>{error} <button className="btn" onClick={() => setError('')}>Dismiss</button></div>}
+            <button className="btn" disabled={exporting} onClick={() => handleExport('json')}>Export JSON</button>
+            <button className="btn" disabled={exporting} onClick={() => handleExport('ndjson')}>Export NDJSON</button>
             <form className="search-box" onSubmit={handleSearchSubmit}>
               <span style={{ color: 'var(--muted)' }}>⌕</span>
               <input
@@ -432,7 +457,7 @@ export default function App() {
             <input
               className="filter-input"
               type="datetime-local"
-              value={filterFrom}
+              value={localDateInput(filterFrom)}
               onChange={e => setFilterFrom(e.target.value ? new Date(e.target.value).toISOString() : '')}
               title="From date"
               placeholder="From"
@@ -440,7 +465,7 @@ export default function App() {
             <input
               className="filter-input"
               type="datetime-local"
-              value={filterTo}
+              value={localDateInput(filterTo)}
               onChange={e => setFilterTo(e.target.value ? new Date(e.target.value).toISOString() : '')}
               title="To date"
               placeholder="To"

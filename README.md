@@ -1,153 +1,282 @@
 # Lens Telemetry Viewer
 
-A lightweight local telemetry receiver and browser UI for Poly Lens device messages.
+A local receiver and browser UI for HP Poly device telemetry. Use it as a lab/sample
+to explore secondary telemetry feeds and collect evidence for EU Data Act validation.
+The viewer, APIs, and clear-data endpoint intentionally have no authentication.
 
-## Architecture
+## Choose your startup method
 
-```
-Devices  →  POST :3001  →  Express Receiver  →  SQLite DB
-                                                      ↓
-Browser  ←  GET  :3000  ←  Express API + Static UI  ←┘
-```
+| Method | Install first | Initial setup | Normal startup |
+|---|---|---|---|
+| Docker | Docker Engine/Desktop with Compose v2, Linux containers | Download or clone this repo | `docker compose up -d` |
+| Node/npm | Node.js **24.x**, including npm | `npm run setup` | `npm start` |
 
-Single Node process runs both the inbound receiver (port 3001) and the UI+API (port 3000).
+Run commands from the repository root. Docker and npm use the same application and
+features, but use separate databases by default. No Visual Studio project is required.
 
-## Quick Start
+## Option A: Docker
 
-### Prerequisites
-- Node.js 18+
-
-### 1. Install and build
-
-```bash
-cd lens-telemetry
-npm run install:all   # installs server + client deps
-npm run build         # builds the React frontend into server/dist
+```sh
+docker compose up -d
+docker compose ps
 ```
 
-### 2. Start
+The first start builds the frontend and installs server dependencies inside the image.
+Open **http://localhost:3000**. The HTTP sample receiver is **http://localhost:3001**.
+Both host ports are bound to localhost by default.
 
-```bash
+Send 18 synthetic messages from inside the container (no host Node installation needed):
+
+```sh
+docker compose exec collector node scripts/test-send.js
+```
+
+These are demonstration messages, not a complete representation of actual device data.
+
+Useful commands:
+
+```sh
+docker compose logs -f
+docker compose down
+# After changing source code:
+docker compose up -d --build
+```
+
+`down` preserves the SQLite named volume. Restarting or replacing the container
+also preserves it. **`docker compose down --volumes` deletes that volume and its data.**
+The restart policy restarts an exited process; an unhealthy status alone does not
+automatically restart a running container.
+
+### Optional settings
+
+Copy `.env.example` to `.env` and edit only what you need. On PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+On macOS/Linux: `cp .env.example .env`.
+
+- `API_PORT`: host viewer port (default 3000).
+- `HTTP_RECV_PORT`: host HTTP receiver port (default 3001).
+- `UI_BIND`: viewer binding (default 127.0.0.1).
+- `RECEIVER_BIND`: HTTP receiver binding (default 127.0.0.1).
+- `HTTPS_BIND` / `HTTPS_PORT`: optional gateway binding (default 0.0.0.0:443).
+
+The container always uses ports 3000/3001 internally and `/data/telemetry.db`.
+Native-only variables such as `DB_PATH`, `API_HOST`, and `RECV_HOST` do not
+override these container settings.
+
+## Option B: Node/npm
+
+Use Node 24.x; older README guidance suggesting Node 18 was incompatible with the
+server's built-in `node:sqlite` dependency.
+
+```sh
+npm run setup
 npm start
 ```
 
-- **Receiver**: `http://0.0.0.0:3001` — POST JSON here from devices
-- **UI**: `http://localhost:3000` — open in browser
+Setup installs locked dependencies and builds the React UI into `client/dist`.
+Open **http://localhost:3000**. Start again later with just `npm start`.
+After pulling dependency/frontend changes, rerun `npm run setup`.
 
-### 3. Send test messages
+In another terminal:
 
-```bash
+```sh
 npm run test-send
-# or point at a specific host:
-node scripts/test-send.js 192.168.1.100 3001
+# Or target another HTTP lab receiver:
+npm run test-send -- 192.168.1.100 3001
 ```
 
-## Configuration
+`npm start` and `npm run dev:server` load an optional root `.env` file.
+Native settings:
 
-Environment variables (all optional):
+| Variable | Default | Meaning |
+|---|---|---|
+| API_HOST | 127.0.0.1 | Viewer/API interface |
+| RECV_HOST | 127.0.0.1 | HTTP receiver interface; set a LAN IP or 0.0.0.0 for direct LAN tests |
+| API_PORT | 3000 | Viewer/API port |
+| RECV_PORT | 3001 | HTTP receiver port |
+| DB_PATH | server/telemetry.db | Database; relative overrides resolve from the working directory |
+| TRUST_PROXY | unset | Comma-separated trusted reverse-proxy IPs/subnets, or Express names such as loopback |
 
-| Variable   | Default          | Description                   |
-|------------|------------------|-------------------------------|
-| RECV_PORT  | 3001             | Inbound telemetry port        |
-| API_PORT   | 3000             | UI + REST API port            |
-| DB_PATH    | server/telemetry.db | SQLite database path       |
+The viewer and receiver must use different ports. Database parent directories are
+created automatically. No forwarded sender address is trusted by default.
 
-Example:
-```bash
-RECV_PORT=8080 API_PORT=8000 npm start
+For development, run `npm run dev:server` and `npm run dev:client` in separate terminals.
+Vite opens at http://localhost:5173 and proxies API calls to port 3000; adjust
+`client/vite.config.js` if you change the native API port.
+
+## HTTPS for real devices
+
+HP's [secondary telemetry instructions](https://info.lens.poly.com/docs/Compliance/EU%20Data/shared-device-tel-setup)
+specify an HTTPS connection, a reachable local server, and no proxy support on the
+device. The gateway below terminates TLS at that local server; the device connects
+directly to it.
+
+1. Choose a LAN IP/DNS name reachable from the devices.
+2. Obtain a PEM server certificate and private key. The certificate's Subject
+   Alternative Name must match that endpoint, and the issuing chain must be trusted
+   by your device/firmware. Use the full certificate chain where applicable.
+3. Put the files at `certs/server.crt` and `certs/server.key`.
+   Certificates, private keys, and local settings are excluded from Git and image builds.
+4. Start the HTTPS configuration:
+
+```sh
+docker compose -f compose.yaml -f compose.https.yaml up -d
 ```
 
-## Receiver API
+5. Allow inbound TCP 443 on the lab host as appropriate. Keep port 3000 local unless
+   you deliberately want remote viewer access.
+6. In Poly Lens, open **Manage > Inventory > device > Settings > Servers >
+   Device Telemetry > Secondary Telemetry**, enable the feed, and enter the
+   collector's LAN IP/FQDN and port (for example `telemetry.lab.example:443`).
+   Device Provisioning must be enabled. Apply; HP documents overnight activation
+   or activation after a device reboot.
+7. Trigger a known device action, then check the viewer and gateway logs.
 
-The receiver accepts **any POST** to any path on port 3001:
+The provided Caddy gateway forwards only to the telemetry receiver, not to the
+viewer/API. HTTP remains localhost-only unless you change its binding. The internal
+TLS network uses `172.30.77.0/24` and trusts only gateway address `172.30.77.3`.
+If that subnet conflicts with your environment, change both static addresses, the
+subnet, and `TRUST_PROXY` together.
 
-```bash
-curl -X POST http://localhost:3001/ \
-  -H "Content-Type: application/json" \
-  -d '{"frameId":"abc123","name":"DeviceInfo.primaryDeviceInfo","type":"telemetry",...}'
+Use the same two `-f` arguments for subsequent logs, status, updates, and shutdown.
+For example:
+
+```sh
+docker compose -f compose.yaml -f compose.https.yaml logs -f collector gateway
+docker compose -f compose.yaml -f compose.https.yaml down
 ```
 
-Returns: `{ "ok": true }` on success.
+The app can also run natively behind an existing TLS reverse proxy. Forward HTTPS
+requests to its HTTP receiver and set `TRUST_PROXY` to the actual proxy address if
+sender IP attribution is needed. A self-signed test certificate does not prove
+compatibility with physical devices.
 
-## REST API (port 3000)
+## Viewing and exporting evidence
 
-| Endpoint              | Description                              |
-|-----------------------|------------------------------------------|
-| GET /api/messages     | Paginated message list (see params below)|
-| GET /api/messages/:id | Single message with full JSON payload    |
-| GET /api/sources      | Distinct sources with counts             |
-| GET /api/event-types  | Distinct event names with counts         |
-| GET /api/stats        | Summary stats (total, last24h, etc.)     |
-| DELETE /api/messages  | Clear all messages (lab use)             |
+The UI supports source/event filters, search, message type, received-date range,
+sorting, pagination, raw payload inspection, and five-second refresh.
 
-### /api/messages query params
+**Export JSON** and **Export NDJSON** include all matching messages across pages,
+using the active filters and sort order. Exports contain:
+- A manifest: schema/app version, export time, filters, order, record count, and dictionary link.
+- Each stored message: received time, device event time where present, sender IP,
+  extracted fields, and the complete parsed JSON payload.
 
-| Param      | Example             | Description                        |
-|------------|---------------------|------------------------------------|
-| page       | 1                   | Page number (default: 1)           |
-| pageSize   | 50                  | Rows per page (default: 50)        |
-| source     | PolyStudio-X50-Lab1 | Filter by source (exact)           |
-| name       | DeviceInfo.cdrInfo  | Filter by event name (exact)       |
-| msg_type   | telemetry           | Filter by message type             |
-| search     | abc123              | Full-text search across all fields |
-| from       | 2024-01-01T00:00:00Z| Received-at range start            |
-| to         | 2024-01-02T00:00:00Z| Received-at range end              |
-| sort       | received_at         | Column to sort by                  |
-| dir        | desc                | Sort direction: asc or desc        |
+JSON uses `{ manifest, messages }`. NDJSON starts with a `kind: manifest` record,
+then one `kind: message` record per message. Export timestamps are UTC.
+Payloads preserve parsed JSON values, **not original wire bytes**, whitespace, or HTTP
+headers. Exports are assembled in memory for lab-sized collections; filter large
+collections into smaller date ranges.
 
-## Source Field Extraction
+Use [the validation record template](docs/validation-record.md) for device model,
+firmware, expected data inventory, test actions, observed events, and gaps.
+The app collects evidence; it does not determine legal compliance or establish that
+the feed includes all data available to a data holder. Keep completed records and
+exports outside source control.
 
-The `source` identifier is extracted from incoming messages using this priority:
+### Device identification
 
-1. `body.source`
-2. `body.payload.value.eventData.source`
-3. `body.payload.value.eventData.lensDeviceId`
-4. `body.appName`
-5. `body.name` (event type)
-6. Sender IP address (fallback)
+New messages prefer stable identifiers in this order:
 
-If your devices send a consistent field for device identity, it will be picked up automatically.
+1. Top-level `deviceId` / `deviceid`.
+2. `payload.value.eventData.lensDeviceId` / `deviceId`.
+3. `payload.deviceId`.
+4. Top-level `source`, then `payload.value.eventData.source`.
+5. Top-level `appName`, then sender IP.
 
-## UI Features
+A source without a stable device ID is a fallback grouping, not verified identity.
+Existing stored rows are preserved with their previous extracted source values.
 
-- **Sidebar** — group and filter by Source or Event Name, with counts
-- **Table** — sortable columns: received time, source, event name, type, event time, frame ID, source IP
-- **Search** — full-text search across all stored fields
-- **Type filter** — telemetry / request / response
-- **Date range** — filter by received time
-- **Detail panel** — click any row to see full JSON with collapsible tree viewer
-- **Live mode** — auto-refreshes every 5s (toggle on/off)
-- **Pagination** — 25/50/100/200 per page
-- **Clear** — one-button database wipe for lab iteration
+## API reference
 
-## Development
+The receiver accepts a JSON object posted to any path on port 3001. Successful
+inserts return `{ "ok": true }`. Malformed JSON/arrays return 400; non-JSON
+content returns 415; payloads over 10 MB return 413. Unknown fields are retained.
 
-Run server and client separately with hot-reload:
+| Method and endpoint | Purpose |
+|---|---|
+| GET /api/health | Process/database readiness and app version |
+| GET /api/messages | Paginated message summaries |
+| GET /api/messages/:id | Full stored message and parsed payload |
+| GET /api/sources | Source counts |
+| GET /api/event-types | Event-name counts |
+| GET /api/stats | Total, last24h, sources, eventTypes |
+| GET /api/export | Filtered evidence download |
+| DELETE /api/messages | Clear **all** stored messages; lab reset |
 
-```bash
-# Terminal 1 — server with watch mode
-npm run dev:server
+Message list and export filters: `source`, `name`, `event_type`, `msg_type`,
+`search`, `from`, `to`. Dates filter **received time** and must be ISO timestamps
+including a timezone. Both bounds are inclusive. `sort` accepts received_at,
+source_ip, frame_id, name, event_type, event_time, msg_type, or source; `dir`
+accepts asc/desc. The message list additionally accepts `page` (default 1) and
+`pageSize` (default 50, maximum 1000). Export accepts `format=json|ndjson`.
 
-# Terminal 2 — Vite dev server (proxies /api to :3000)
-npm run dev:client
-# Open http://localhost:5173
+## Backups and reset
+
+SQLite uses WAL journaling. Use the included online backup command instead of
+copying a live database file without its journal.
+
+Native:
+
+```sh
+npm run backup
+# Or choose a new destination:
+npm run backup -- backups/my-test.db
 ```
 
-## Database
+Docker:
 
-SQLite file at `server/telemetry.db`. Schema:
-
-```sql
-CREATE TABLE messages (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  received_at TEXT,     -- ISO 8601, when server received it
-  source_ip   TEXT,     -- sender's IP address
-  frame_id    TEXT,     -- body.frameId
-  name        TEXT,     -- body.name (event type string)
-  event_type  TEXT,     -- payload.value.eventType
-  event_time  TEXT,     -- payload.value.eventTime (device timestamp)
-  msg_type    TEXT,     -- body.type (telemetry/request/response)
-  source      TEXT,     -- extracted device identifier
-  raw_json    TEXT      -- complete original payload
-);
+```sh
+docker compose exec collector node scripts/backup.js /data/backups/my-test.db
+docker compose cp collector:/data/backups/my-test.db ./my-test.db
 ```
+
+Existing destination files are never overwritten. For restore, stop the app first.
+Move the current database and any matching `-wal` / `-shm` files aside, then put the
+backup at the configured database path. For Docker, use `docker compose cp` with the
+stopped collector and ensure the restored file is writable by its `node` user.
+Restart and verify counts. Back up first if the collection matters.
+
+The UI's **Clear** button requires confirmation and clears all messages regardless
+of active filters. It preserves the database schema.
+
+## Tests and automation
+
+```sh
+npm run setup
+npm test
+# With Docker installed:
+node scripts/docker-smoke.js
+```
+
+Integration tests use a temporary database and check ingestion, sender attribution,
+invalid inputs, date statistics, exports, online backups, restart persistence, and
+reset. The Docker smoke test creates a unique disposable Compose project, checks
+the built UI and exports, replaces the container, verifies persistence, and removes
+only its own test project and volume.
+
+GitHub Actions:
+- Every push/PR builds and tests the npm workflow on Windows and Linux.
+- A Linux job builds the image and tests Compose persistence plus HTTPS delivery
+  using a disposable localhost certificate.
+- Publishing a GitHub Release first runs verification, then publishes Linux
+  amd64/arm64 images to `ghcr.io/<owner>/<repo>:<release-tag>`.
+  It uses the workflow's temporary `GITHUB_TOKEN`; no personal token is required.
+
+Image publication needs GitHub Actions enabled and package-write permission.
+A newly created GHCR package may need its visibility changed to public before
+anonymous users can pull it. No image exists just because these files are present.
+
+After a release image is available, set `TELEMETRY_IMAGE` in `.env` to its exact tag, then:
+
+```sh
+docker compose pull collector
+docker compose up -d --no-build
+```
+
+Use the HTTPS override arguments too when running the gateway. Upgrade deliberately
+between versioned releases so a validation run stays on a known version.

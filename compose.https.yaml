@@ -1,0 +1,33 @@
+# Merge with compose.yaml. Certificates must already exist in ./certs.
+services:
+  collector:
+    environment:
+      TRUST_PROXY: 172.30.77.3
+    networks:
+      default:
+      telemetry-tls:
+        ipv4_address: 172.30.77.2
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      collector:
+        condition: service_healthy
+    ports:
+      - "${HTTPS_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      telemetry-tls:
+        ipv4_address: 172.30.77.3
+networks:
+  telemetry-tls:
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24
+volumes:
+  caddy-data:
+  caddy-config:

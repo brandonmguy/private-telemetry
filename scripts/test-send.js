@@ -28,6 +28,7 @@ const DEVICES = [
 function makePrimaryDeviceInfo(dev) {
   return {
     frameId: uuid(),
+    deviceId: dev.lensDeviceId,
     appName: dev.appName,
     name: 'DeviceInfo.primaryDeviceInfo',
     type: 'telemetry',
@@ -124,6 +125,7 @@ function makeAppState(dev) {
   const states = ['IN_MEETING', 'IDLE', 'INCOMING_CALL', 'IN_CALL', 'WAKING'];
   return {
     frameId: uuid(),
+    deviceId: dev.lensDeviceId,
     name: 'DeviceInfo.AppState',
     type: 'telemetry',
     payload: {
@@ -178,9 +180,10 @@ async function sendMsg(payload, devIp) {
         'X-Forwarded-For': devIp,
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
     });
     const json = await res.json();
-    return json.ok;
+    return res.ok && json.ok;
   } catch (err) {
     console.error('  ✗ Send failed:', err.message);
     return false;
@@ -211,6 +214,7 @@ async function main() {
   }
 
   console.log(`\n✅ Sent ${ok}/${messages.length} messages successfully.\n`);
+  if (ok !== messages.length) process.exitCode = 1;
 }
 
-main();
+main().catch(error => { console.error(error); process.exitCode = 1; });
