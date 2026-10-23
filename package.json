@@ -2,13 +2,16 @@
   "name": "lens-telemetry",
   "version": "1.0.0",
   "private": true,
+  "engines": { "node": ">=24 <25" },
   "scripts": {
-    "install:all": "cd server && npm install && cd ../client && npm install",
-    "build":       "cd client && npm run build",
-    "start":       "cd server && node index.js",
-    "dev:server":  "cd server && node --watch index.js",
-    "dev:client":  "cd client && npm run dev",
+    "install:all": "npm ci --prefix server && npm ci --prefix client",
+    "build":       "npm run build --prefix client",
+    "start":       "node --env-file-if-exists=.env server/index.js",
+    "dev:server":  "node --env-file-if-exists=.env --watch server/index.js",
+    "dev:client":  "npm run dev --prefix client",
     "setup":       "npm run install:all && npm run build",
-    "test-send":   "node scripts/test-send.js"
+    "test-send":   "node scripts/test-send.js",
+    "test":        "node --test test/*.test.js",
+    "backup":      "node --env-file-if-exists=.env scripts/backup.js"
   }
 }

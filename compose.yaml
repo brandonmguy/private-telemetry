@@ -1,0 +1,25 @@
+name: private-telemetry
+services:
+  collector:
+    image: ${TELEMETRY_IMAGE:-private-telemetry:local}
+    build: .
+    init: true
+    restart: unless-stopped
+    environment:
+      API_HOST: 0.0.0.0
+      RECV_HOST: 0.0.0.0
+      API_PORT: 3000
+      RECV_PORT: 3001
+      DB_PATH: /data/telemetry.db
+    ports:
+      - "${UI_BIND:-127.0.0.1}:${API_PORT:-3000}:3000"
+      - "${RECEIVER_BIND:-127.0.0.1}:${HTTP_RECV_PORT:-3001}:3001"
+    volumes:
+      - telemetry-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  telemetry-data:

@@ -1,5 +1,21 @@
 const BASE = '/api';
 
+export async function downloadExport(params, format = 'json') {
+  const qs = new URLSearchParams(Object.fromEntries(
+    Object.entries({ ...params, format }).filter(([, value]) => value != null && value !== '')
+  ));
+  const response = await fetch(`${BASE}/export?${qs}`);
+  if (!response.ok) throw new Error('Export failed');
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `telemetry-${Date.now()}.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export async function fetchMessages(params = {}) {
   const qs = new URLSearchParams(
     Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))
